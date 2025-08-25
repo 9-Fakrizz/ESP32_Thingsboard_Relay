@@ -5,16 +5,19 @@
 #include <DHT.h>
 
 // ====== WiFi Config ======
-#define WIFI_SSID "Ok"
+#define WIFI_SSID "CARETUNU123"
 #define WIFI_PASSWORD "q12345678"
 
 // ====== ThingsBoard Config ======
-#define TOKEN "Qg51Zm1EB4xLTfJUFxfv"   // เอาจาก Device ใน ThingsBoard Demo
+#define TOKEN "4k0UHuHe1Ad7NzSq0yc0"   // เอาจาก Device ใน ThingsBoard Demo
 #define THINGSBOARD_SERVER "demo.thingsboard.io"
 
 // ====== Telegram Config ======
-#define BOT_TOKEN "7991014450:AAGjCEUHqhbV-E9Q2YQP-ZdgmakDjq52550"
-#define CHAT_ID "7625451518"
+#define BOT_TOKEN "7571172904:AAG1VgHgjK6yBHXl0Un6Hmga2_Z9xGkkEI0"
+#define CHAT_ID "7176116450"
+
+// ====== API key for GEMINI 2.5 flash ======
+//AIzaSyArg_x4SphohCxI3fF-09Ii56IktVcMYCk
 
 // ====== Pins ======
 #define MQ137_PIN 34
@@ -26,6 +29,7 @@
 #define RELAY4 19
 
 bool manual_mode = false;
+bool online_mode = false;
 
 // ====== Threshold ======
 float ammoniaThreshold = 30;
@@ -105,6 +109,7 @@ void displayStatus(float mq137, float temp, float hum, int waterLevel) {
 }
 
 long timer1;
+long timer_connect;
 
 // ====== Setup ======
 void setup() {
@@ -117,34 +122,66 @@ void setup() {
   pinMode(RELAY4, OUTPUT);
   pinMode(WATER_PIN, INPUT_PULLDOWN);
 
+  timer_connect = millis();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500); Serial.print(".");
+    if(millis() - timer_connect >= 10000) break;
   }
-  Serial.println("\nWiFi connected");
-
-  client.setServer(THINGSBOARD_SERVER, 1883);
-  client.setCallback(callback);
+  if(WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected");
+    online_mode = true;
+    client.setServer(THINGSBOARD_SERVER, 1883);
+    client.setCallback(callback);
+  }else{
+    Serial.println("\nWiFi cannot connect");
+    Serial.println("Run Offline Mode !");
+    online_mode = false;
+  }
+  
   timer1 = millis();
+  timer_connect = millis();
 }
 
 // ====== Loop ======
 void loop() {
-  if (!client.connected()) {
-    while (!client.connected()) {
-      if (client.connect("ESP32_Device", TOKEN, NULL)) {
-        Serial.println("Connected to ThingsBoard");
-        client.subscribe("v1/devices/me/rpc/request/+"); // รับคำสั่ง manual
-      } else {
-        delay(2000);
+  // check wifi every 5 second
+  if(millis() - timer_connect >= 5000 && WiFi.status() != WL_CONNECTED){
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500); Serial.print(".");
+      if(millis() - timer_connect >= 10000) break; // start 5 then count 5 total 10
+    }
+    if(WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi connected");
+      online_mode = true;
+      client.setServer(THINGSBOARD_SERVER, 1883);
+      client.setCallback(callback);
+    }else{
+      Serial.println("\nWiFi cannot connect");
+      Serial.println("Run Offline Mode !");
+      online_mode = false;
+    }
+      timer_connect = millis();
+  }
+
+
+  if(online_mode){
+    if (!client.connected()) {
+      while (!client.connected()) {
+        if (client.connect("ESP32_Device", TOKEN, NULL)) {
+          Serial.println("Connected to ThingsBoard");
+          client.subscribe("v1/devices/me/rpc/request/+"); // รับคำสั่ง manual
+        } else {
+          delay(2000);
+        }
       }
     }
+    client.loop();
   }
-  client.loop();
 
   // ===== อ่านค่าจาก Sensor =====
   float mq137 = analogRead(MQ137_PIN);
-  mq137 = mq137/100.0;
+  mq137 = mq137/500.0;
   float temp = dht.readTemperature();
   float hum = dht.readHumidity();
   int waterLevel = digitalRead(WATER_PIN);
@@ -152,7 +189,7 @@ void loop() {
   displayStatus(mq137, temp, hum, waterLevel);
 
 
-  if (millis() - timer1 >= 5000 ){
+  if (millis() - timer1 >= 5000 && online_mode ){
     // ===== ส่งค่าไป ThingsBoard =====
     String payload = "{";
     payload += "\"ammonia\":" + String(mq137) + ",";

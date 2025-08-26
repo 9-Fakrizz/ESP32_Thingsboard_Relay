@@ -15,9 +15,9 @@
 // ====== Telegram Config ======
 #define BOT_TOKEN "7571172904:AAG1VgHgjK6yBHXl0Un6Hmga2_Z9xGkkEI0"
 #define CHAT_ID "7176116450"
-
 // ====== API key for GEMINI 2.5 flash ======
 //AIzaSyArg_x4SphohCxI3fF-09Ii56IktVcMYCk
+
 
 // ====== Pins ======
 #define MQ137_PIN 34
@@ -29,7 +29,6 @@
 #define RELAY4 19
 
 bool manual_mode = false;
-bool online_mode = false;
 
 // ====== Threshold ======
 float ammoniaThreshold = 30;
@@ -71,14 +70,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println("Message from TB: " + msg);
 
   // Manual control จาก Dashboard
-  if (msg.indexOf("relay1_on") != -1) digitalWrite(RELAY1, HIGH);
-  if (msg.indexOf("relay1_off") != -1) digitalWrite(RELAY1, LOW);
-  if (msg.indexOf("relay2_on") != -1) digitalWrite(RELAY2, HIGH);
-  if (msg.indexOf("relay2_off") != -1) digitalWrite(RELAY2, LOW);
-  if (msg.indexOf("relay3_on") != -1) digitalWrite(RELAY3, HIGH);
-  if (msg.indexOf("relay3_off") != -1) digitalWrite(RELAY3, LOW);
-  if (msg.indexOf("relay4_on") != -1) digitalWrite(RELAY4, HIGH);
-  if (msg.indexOf("relay4_off") != -1) digitalWrite(RELAY4, LOW);
+  if (msg.indexOf("relay1_on") != -1) digitalWrite(RELAY1, LOW);
+  if (msg.indexOf("relay1_off") != -1) digitalWrite(RELAY1, HIGH);
+  if (msg.indexOf("relay2_on") != -1) digitalWrite(RELAY2, LOW);
+  if (msg.indexOf("relay2_off") != -1) digitalWrite(RELAY2, HIGH);
+  if (msg.indexOf("relay3_on") != -1) digitalWrite(RELAY3, LOW);
+  if (msg.indexOf("relay3_off") != -1) digitalWrite(RELAY3, HIGH);
+  if (msg.indexOf("relay4_on") != -1) digitalWrite(RELAY4, LOW);
+  if (msg.indexOf("relay4_off") != -1) digitalWrite(RELAY4, HIGH);
   if (msg.indexOf("manual_off") != -1) manual_mode = false;
   if (msg.indexOf("manual_on") != -1) manual_mode = true;
 }
@@ -109,7 +108,6 @@ void displayStatus(float mq137, float temp, float hum, int waterLevel) {
 }
 
 long timer1;
-long timer_connect;
 
 // ====== Setup ======
 void setup() {
@@ -122,66 +120,34 @@ void setup() {
   pinMode(RELAY4, OUTPUT);
   pinMode(WATER_PIN, INPUT_PULLDOWN);
 
-  timer_connect = millis();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500); Serial.print(".");
-    if(millis() - timer_connect >= 10000) break;
   }
-  if(WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected");
-    online_mode = true;
-    client.setServer(THINGSBOARD_SERVER, 1883);
-    client.setCallback(callback);
-  }else{
-    Serial.println("\nWiFi cannot connect");
-    Serial.println("Run Offline Mode !");
-    online_mode = false;
-  }
-  
+  Serial.println("\nWiFi connected");
+
+  client.setServer(THINGSBOARD_SERVER, 1883);
+  client.setCallback(callback);
   timer1 = millis();
-  timer_connect = millis();
 }
 
 // ====== Loop ======
 void loop() {
-  // check wifi every 5 second
-  if(millis() - timer_connect >= 5000 && WiFi.status() != WL_CONNECTED){
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500); Serial.print(".");
-      if(millis() - timer_connect >= 10000) break; // start 5 then count 5 total 10
-    }
-    if(WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nWiFi connected");
-      online_mode = true;
-      client.setServer(THINGSBOARD_SERVER, 1883);
-      client.setCallback(callback);
-    }else{
-      Serial.println("\nWiFi cannot connect");
-      Serial.println("Run Offline Mode !");
-      online_mode = false;
-    }
-      timer_connect = millis();
-  }
-
-
-  if(online_mode){
-    if (!client.connected()) {
-      while (!client.connected()) {
-        if (client.connect("ESP32_Device", TOKEN, NULL)) {
-          Serial.println("Connected to ThingsBoard");
-          client.subscribe("v1/devices/me/rpc/request/+"); // รับคำสั่ง manual
-        } else {
-          delay(2000);
-        }
+  if (!client.connected()) {
+    while (!client.connected()) {
+      if (client.connect("ESP32_Device", TOKEN, NULL)) {
+        Serial.println("Connected to ThingsBoard");
+        client.subscribe("v1/devices/me/rpc/request/+"); // รับคำสั่ง manual
+      } else {
+        delay(2000);
       }
     }
-    client.loop();
   }
+  client.loop();
 
   // ===== อ่านค่าจาก Sensor =====
   float mq137 = analogRead(MQ137_PIN);
-  mq137 = mq137/500.0;
+  mq137 = mq137/100.0;
   float temp = dht.readTemperature();
   float hum = dht.readHumidity();
   int waterLevel = digitalRead(WATER_PIN);
@@ -189,7 +155,7 @@ void loop() {
   displayStatus(mq137, temp, hum, waterLevel);
 
 
-  if (millis() - timer1 >= 5000 && online_mode ){
+  if (millis() - timer1 >= 5000 ){
     // ===== ส่งค่าไป ThingsBoard =====
     String payload = "{";
     payload += "\"ammonia\":" + String(mq137) + ",";
@@ -205,29 +171,31 @@ void loop() {
   if(manual_mode == false){
     // ===== Auto Control =====
     if (waterLevel == LOW) {  // ไม่มีน้ำ
-      digitalWrite(RELAY1, HIGH);
-    } else {
       digitalWrite(RELAY1, LOW);
+    } else {
+      digitalWrite(RELAY1, HIGH);
     }
 
-    if (mq137 > ammoniaThreshold) {
-      digitalWrite(RELAY2, HIGH);
+    if (mq137 > ammoniaThreshold || hum > humidityThreshold || temp > tempHigh) {
+      digitalWrite(RELAY2, LOW);
       sendMessage("Ammonia High: " + String(mq137));
+    }
+    else{
+      digitalWrite(RELAY2, HIGH);
     }
 
     if (temp > tempHigh) {
-      digitalWrite(RELAY2, HIGH);
       sendMessage("Temp High: " + String(temp));
     }
 
     if (hum > humidityThreshold) {
-      digitalWrite(RELAY2, HIGH);
+      sendMessage("Humid High: " + String(hum));
     }
 
     if (temp < tempLow) {
-      digitalWrite(RELAY3, HIGH);
-    } else {
       digitalWrite(RELAY3, LOW);
+    } else {
+      digitalWrite(RELAY3, HIGH);
     }
 
   }
